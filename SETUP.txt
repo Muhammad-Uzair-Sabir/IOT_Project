@@ -1,0 +1,37 @@
+Smart Energy Monitoring — run order
+====================================
+
+1) Prerequisites: Node.js 18+, Python 3 with pip, Docker Desktop (for Mosquitto + MongoDB).
+
+2) Start infrastructure:
+   docker compose up -d
+   (MongoDB on 27017, MQTT on 1883)
+
+3) Python ML deps:
+   pip install -r ml/requirements.txt
+
+4) Backend:
+   cd backend
+   npm install
+   npm start
+   Default .env uses SKIP_AUTH=true (no login). Set SKIP_AUTH=false to require login (demo / demo123).
+
+5) Device simulator (new terminal):
+   cd simulator
+   npm install
+   npm start
+
+6) Frontend (new terminal):
+   cd frontend
+   npm install
+   npm run dev
+   Open http://localhost:5173
+
+7) Optional: production build
+   cd frontend && npm run build && npm run preview
+
+Notes
+-----
+- Chart data updates in real time via WebSocket (Socket.IO) when new MQTT readings are stored.
+- Export CSV and browser Print-to-PDF from the dashboard toolbar.
+- High usage alerts fire when a single reading exceeds ~3500 W (adjust in backend/src/index.js HIGH_WATTS).
