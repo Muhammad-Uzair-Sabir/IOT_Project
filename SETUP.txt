@@ -14,7 +14,9 @@ Smart Energy Monitoring — run order
    cd backend
    npm install
    npm start
-   Default .env uses SKIP_AUTH=true (no login). Set SKIP_AUTH=false to require login (demo / demo123).
+   Copy .env.example to .env. SKIP_AUTH=true opens the dashboard without login.
+   With SKIP_AUTH=false: use Sign up, or demo@example.com / demo123 (seeded on first run).
+   Google Sign-In: set GOOGLE_CLIENT_ID in backend/.env and the same OAuth Web client ID in frontend/.env as VITE_GOOGLE_CLIENT_ID (Google Cloud Console → Authorized JavaScript origins: http://localhost:5173).
 
 5) Device simulator (new terminal):
    cd simulator

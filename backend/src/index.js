@@ -4,57 +4,23 @@ import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import mongoose from "mongoose";
-import crypto from "crypto";
 
 import { Device } from "./models/Device.js";
 import { EnergyData } from "./models/EnergyData.js";
-import { seedDevices } from "./seed.js";
+import { seedDevices, seedDemoUser } from "./seed.js";
 import { connectMqtt } from "./services/mqttClient.js";
 import { runPrediction } from "./services/prediction.js";
+import { authMiddleware, requireAuth } from "./middleware/auth.js";
+import { createAuthRouter } from "./routes/auth.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/iot_energy";
 const MQTT_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
-const DEMO_USER = process.env.DEMO_USER || "demo";
-const DEMO_PASS = process.env.DEMO_PASS || "demo123";
 const SKIP_AUTH = process.env.SKIP_AUTH === "true";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 
-/** Simple signed token (not full JWT) for demo login */
-function signToken(payload) {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = crypto.createHmac("sha256", JWT_SECRET).update(body).digest("base64url");
-  return `${body}.${sig}`;
-}
-
-function verifyToken(token) {
-  if (!token || typeof token !== "string") return null;
-  const [body, sig] = token.split(".");
-  if (!body || !sig) return null;
-  const expect = crypto.createHmac("sha256", JWT_SECRET).update(body).digest("base64url");
-  if (expect !== sig) return null;
-  try {
-    return JSON.parse(Buffer.from(body, "base64url").toString());
-  } catch {
-    return null;
-  }
-}
-
-function authMiddleware(req, res, next) {
-  const header = req.headers.authorization;
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
-  req.user = verifyToken(token);
-  next();
-}
-
-function requireAuth(req, res, next) {
-  if (SKIP_AUTH) return next();
-  if (!req.user) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-}
+const requireAuthFn = requireAuth(SKIP_AUTH);
 
 const HIGH_WATTS = 3500;
 
@@ -68,24 +34,15 @@ const io = new Server(httpServer, {
 });
 
 app.get("/api/config", (_req, res) => {
-  res.json({ skipAuth: SKIP_AUTH });
+  res.json({
+    skipAuth: SKIP_AUTH,
+    googleClientId: GOOGLE_CLIENT_ID || null,
+  });
 });
 
-app.post("/api/auth/login", (req, res) => {
-  const { username, password } = req.body || {};
-  if (username === DEMO_USER && password === DEMO_PASS) {
-    const token = signToken({ sub: username, iat: Date.now() });
-    return res.json({ token, user: { username } });
-  }
-  res.status(401).json({ error: "Invalid credentials" });
-});
+app.use("/api/auth", createAuthRouter({ googleClientId: GOOGLE_CLIENT_ID }));
 
-app.get("/api/auth/me", authMiddleware, (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-  res.json({ user: { username: req.user.sub } });
-});
-
-app.get("/devices", authMiddleware, requireAuth, async (_req, res) => {
+app.get("/devices", authMiddleware, requireAuthFn, async (_req, res) => {
   try {
     const devices = await Device.find().lean();
     res.json(devices);
@@ -94,7 +51,7 @@ app.get("/devices", authMiddleware, requireAuth, async (_req, res) => {
   }
 });
 
-app.get("/data", authMiddleware, requireAuth, async (req, res) => {
+app.get("/data", authMiddleware, requireAuthFn, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 500, 2000);
     const data = await EnergyData.find().sort({ timestamp: -1 }).limit(limit).lean();
@@ -104,7 +61,7 @@ app.get("/data", authMiddleware, requireAuth, async (req, res) => {
   }
 });
 
-app.get("/data/:device", authMiddleware, requireAuth, async (req, res) => {
+app.get("/data/:device", authMiddleware, requireAuthFn, async (req, res) => {
   try {
     const { device } = req.params;
     const map = { ac: "Air Conditioner", lights: "Lights", fridge: "Refrigerator" };
@@ -120,7 +77,7 @@ app.get("/data/:device", authMiddleware, requireAuth, async (req, res) => {
   }
 });
 
-app.get("/stats", authMiddleware, requireAuth, async (_req, res) => {
+app.get("/stats", authMiddleware, requireAuthFn, async (_req, res) => {
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const pipeline = [
@@ -161,7 +118,7 @@ app.get("/stats", authMiddleware, requireAuth, async (_req, res) => {
   }
 });
 
-app.get("/prediction", authMiddleware, requireAuth, async (_req, res) => {
+app.get("/prediction", authMiddleware, requireAuthFn, async (_req, res) => {
   try {
     const rows = await EnergyData.find()
       .sort({ timestamp: -1 })
@@ -190,7 +147,7 @@ app.get("/prediction", authMiddleware, requireAuth, async (_req, res) => {
   }
 });
 
-app.get("/export/csv", authMiddleware, requireAuth, async (req, res) => {
+app.get("/export/csv", authMiddleware, requireAuthFn, async (req, res) => {
   try {
     const device = req.query.device;
     const map = { ac: "Air Conditioner", lights: "Lights", fridge: "Refrigerator" };
@@ -211,6 +168,7 @@ app.get("/export/csv", authMiddleware, requireAuth, async (req, res) => {
 async function main() {
   await mongoose.connect(MONGODB_URI);
   await seedDevices();
+  await seedDemoUser();
   console.log("MongoDB connected");
 
   connectMqtt(MQTT_URL, (reading) => {
